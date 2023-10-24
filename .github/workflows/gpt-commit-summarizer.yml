@@ -17,4 +17,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         with:
-          openai_model: "gpt-3.5-turbo-instruct"
+          openai_model: "gpt-3.5-turbo-16k"
