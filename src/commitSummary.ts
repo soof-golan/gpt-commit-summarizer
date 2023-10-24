@@ -84,30 +84,39 @@ async function getOpenAICompletion(
       .map((file: any) => formatGitDiff(file.filename, file.patch))
       .join("\n");
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-    const openAIPrompt = `${OPEN_AI_PRIMING}\n\nTHE GIT DIFF TO BE SUMMARIZED:\n\`\`\`\n${rawGitDiff}\n\`\`\`\n\nTHE SUMMERY:\n`;
-
+    const openAIPrompt = `\n\nTHE GIT DIFF TO BE SUMMARIZED:\n\`\`\`\n${rawGitDiff}\n\`\`\`\n\nTHE SUMMERY:\n`;
     console.log(
-      `OpenAI prompt for commit ${diffMetadata.commit.data.sha}: ${openAIPrompt}`
+      `System prompt for commit ${diffMetadata.commit.data.sha}:\n${OPEN_AI_PRIMING}`
+    );
+    console.log(
+      `User prompt for commit ${diffMetadata.commit.data.sha}: ${openAIPrompt}`
     );
 
     if (openAIPrompt.length > MAX_OPEN_AI_QUERY_LENGTH) {
       throw new Error("OpenAI query too big");
     }
 
-    const response = await openai.createCompletion({
+    const response = await openai.chat.completions.create({
       model: MODEL_NAME,
-      prompt: openAIPrompt,
-      max_tokens: MAX_TOKENS,
       temperature: TEMPERATURE,
+      max_tokens: MAX_TOKENS,
+      messages: [
+        {
+          role: "system",
+          content: OPEN_AI_PRIMING,
+        },
+        {
+          role: "user",
+          content: openAIPrompt,
+        },
+      ],
     });
 
-    if (
-      response.data.choices !== undefined &&
-      response.data.choices.length > 0
-    ) {
+    if (response.choices !== undefined && response.choices.length > 0) {
       completion = postprocessSummary(
         diffResponse.data.files.map((file: any) => file.filename),
-        response.data.choices[0].text ?? "Error: couldn't generate summary",
+        response.choices[0].message.content ??
+          "Error: couldn't generate summary",
         diffMetadata
       );
     }
