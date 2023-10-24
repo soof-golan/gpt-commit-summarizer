@@ -9,6 +9,7 @@ import {
 } from "./openAi";
 import { SHARED_PROMPT } from "./sharedPrompt";
 import { summarizePr } from "./summarizePr";
+import { shouldIgnoreFile } from "./ignoreFiles";
 
 const OPEN_AI_PRIMING = `${SHARED_PROMPT}
 After the git diff of the first file, there will be an empty line, and then the git diff of the next file. 
@@ -21,22 +22,35 @@ Do not include the file name as another part of the comment, only in the end in 
 Do not use the characters \`[\` or \`]\` in the summary for other purposes.
 Write every summary comment in a new line.
 Comments should be in a bullet point list, each line starting with a \`*\`.
+The summary should only include non-obvious changes.
 The summary should not include comments copied from the code.
+The summary should not include comments about the code style, formatting and linting.
 The output should be easily readable. When in doubt, write less comments and not more.
 Readability is top priority. Write only the most important comments about the diff.
 
-EXAMPLE SUMMARY COMMENTS:
+EXAMPLES OF SUMMARY COMMENTS:
+
+Example 1:
 \`\`\`
 * Raised the amount of returned recordings from \`10\` to \`100\` [packages/server/recordings_api.ts], [packages/server/constants.ts]
 * Fixed a typo in the github action name [.github/workflows/gpt-commit-summarizer.yml]
+\`\`\`
+
+Example 2:
+\`\`\`
+* Added XLSX export support [packages/server/exports/xlsx.ts]
+\`\`\`
+
+Example 3:
+\`\`\`
 * Moved the \`octokit\` initialization to a separate file [src/octokit.ts], [src/index.ts]
 * Added an OpenAI API for completions [packages/utils/apis/openai.ts]
 * Lowered numeric tolerance for test files
 \`\`\`
-Most commits will have less comments than this examples list.
-The last comment does not include the file names,
-because there were more than two relevant files in the hypothetical commit.
-Do not include parts of the example in your summary.
+
+Only comment about the most important changes.
+The last comment does not include the file names because there were more than two relevant files in the hypothetical commit.
+Do not include parts of the examples in your summary.
 It is given only as an example of appropriate comments.
 `;
 
@@ -79,35 +93,45 @@ async function getOpenAICompletion(
 ): Promise<string> {
   try {
     const diffResponse = await octokit.request(comparison.url);
+    const files: any[] = diffResponse.data.files.filter((file: any) => !shouldIgnoreFile(file.filename))
 
-    const rawGitDiff = diffResponse.data.files
+    const rawGitDiff = files
       .map((file: any) => formatGitDiff(file.filename, file.patch))
       .join("\n");
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-    const openAIPrompt = `${OPEN_AI_PRIMING}\n\nTHE GIT DIFF TO BE SUMMARIZED:\n\`\`\`\n${rawGitDiff}\n\`\`\`\n\nTHE SUMMERY:\n`;
-
+    const openAIPrompt = `\n\nTHE GIT DIFF TO BE SUMMARIZED:\n\`\`\`\n${rawGitDiff}\n\`\`\`\n\nTHE SUMMERY:\n`;
     console.log(
-      `OpenAI prompt for commit ${diffMetadata.commit.data.sha}: ${openAIPrompt}`
+      `System prompt for commit ${diffMetadata.commit.data.sha}:\n${OPEN_AI_PRIMING}`
+    );
+    console.log(
+      `User prompt for commit ${diffMetadata.commit.data.sha}: ${openAIPrompt}`
     );
 
     if (openAIPrompt.length > MAX_OPEN_AI_QUERY_LENGTH) {
       throw new Error("OpenAI query too big");
     }
 
-    const response = await openai.createCompletion({
+    const response = await openai.chat.completions.create({
       model: MODEL_NAME,
-      prompt: openAIPrompt,
-      max_tokens: MAX_TOKENS,
       temperature: TEMPERATURE,
+      max_tokens: MAX_TOKENS,
+      messages: [
+        {
+          role: "system",
+          content: OPEN_AI_PRIMING,
+        },
+        {
+          role: "user",
+          content: openAIPrompt,
+        },
+      ],
     });
 
-    if (
-      response.data.choices !== undefined &&
-      response.data.choices.length > 0
-    ) {
+    if (response.choices !== undefined && response.choices.length > 0) {
       completion = postprocessSummary(
-        diffResponse.data.files.map((file: any) => file.filename),
-        response.data.choices[0].text ?? "Error: couldn't generate summary",
+        files.map((file: any) => file.filename),
+        response.choices[0].message.content ??
+          "Error: couldn't generate summary",
         diffMetadata
       );
     }
