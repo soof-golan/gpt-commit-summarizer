@@ -9,6 +9,7 @@ import {
 } from "./openAi";
 import { SHARED_PROMPT } from "./sharedPrompt";
 import { summarizePr } from "./summarizePr";
+import { shouldIgnoreFile } from "./ignoreFiles";
 
 const OPEN_AI_PRIMING = `${SHARED_PROMPT}
 After the git diff of the first file, there will be an empty line, and then the git diff of the next file. 
@@ -79,8 +80,9 @@ async function getOpenAICompletion(
 ): Promise<string> {
   try {
     const diffResponse = await octokit.request(comparison.url);
+    const files: any[] = diffResponse.data.files.filter((file: any) => !shouldIgnoreFile(file.filename))
 
-    const rawGitDiff = diffResponse.data.files
+    const rawGitDiff = files
       .map((file: any) => formatGitDiff(file.filename, file.patch))
       .join("\n");
     // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
@@ -114,7 +116,7 @@ async function getOpenAICompletion(
 
     if (response.choices !== undefined && response.choices.length > 0) {
       completion = postprocessSummary(
-        diffResponse.data.files.map((file: any) => file.filename),
+        files.map((file: any) => file.filename),
         response.choices[0].message.content ??
           "Error: couldn't generate summary",
         diffMetadata
